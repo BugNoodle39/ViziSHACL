@@ -20,28 +20,50 @@ const ENDPOINT_TYPE = process.env.ENDPOINT_TYPE
 const DB_CONFIG = pgUrlParseInstance(DB_URL)
 const db = pgpInstance(DB_CONFIG)
 
+function printProgress(label, current, total) {
+    const pct = total > 0 ? Math.round((current / total) * 100) : 100
+    const filled = Math.floor(pct / 5)
+    const bar = '\u2588'.repeat(filled) + '\u2591'.repeat(20 - filled)
+    process.stdout.write(`\r  ${label} [${bar}] ${pct}%  (${current}/${total})`)
+}
+
+function printStepDone(label, count, startTime) {
+    const secs = ((Date.now() - startTime) / 1000).toFixed(1)
+    process.stdout.write(`\r  ${label} [\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588] 100%  (${count}/${count})  ${secs}s\n`)
+}
 
 //Ievieto saveidotos shacl objektus ViziQuer DB
 async function pushShaclToViziquerDb(classesByIri, propertiesById) {
     //let dbSchema = 'mini_university'
     let dbSchema = DB_SCHEMA
     let cnt = 1
+    const totalStart = Date.now()
 
+    console.log(`\nImporting SHACL into schema '${dbSchema}'...`)
+
+    process.stdout.write('  Ensuring schema exists...')
     await ensureSchemaExists(dbSchema)
-    await clearDB(dbSchema)
+    process.stdout.write(' done\n')
 
-    //TODO: transakcijas
+    process.stdout.write('  Clearing old data...')
+    await clearDB(dbSchema)
+    process.stdout.write(' done\n')
+
     await pushShaclToClasses(classesByIri, dbSchema, cnt)
     await pushShaclToProperties(propertiesById, dbSchema, cnt)
     await pushShaclToCpRels(propertiesById, dbSchema, cnt)
-
     await pushShaclToCpcRels(propertiesById, dbSchema, cnt)
     await pushShaclToPpRelsType1(propertiesById, dbSchema, cnt)
     await pushShaclToPpRelsType2(propertiesById, dbSchema, cnt)
 
+    process.stdout.write('  Registering schema in ViziQuer...')
     await setRdfType(dbSchema)
     await pushShaclToParameters(dbSchema)
     await db.none('CALL public.register_schemata()')
+    process.stdout.write(' done\n')
+
+    const totalSecs = ((Date.now() - totalStart) / 1000).toFixed(1)
+    console.log(`\nDone! Schema '${dbSchema}' ('${SCHEMA_DISPLAY_NAME || dbSchema}') is ready in ViziQuer. (${totalSecs}s total)`)
 }
   
 async function ensureSchemaExists(dbSchema) {
@@ -70,6 +92,10 @@ async function clearDB(dbSchema) {
 }
 
 async function pushShaclToClasses(classesByIri, dbSchema, cnt) {
+    const total = Object.values(classesByIri).reduce((s, c) => s + c.targetClassList.length, 0)
+    let current = 0
+    const start = Date.now()
+    printProgress('Classes     ', current, total)
     for (let iri in classesByIri) {
         let shaclClass = classesByIri[iri]
 
@@ -123,8 +149,11 @@ async function pushShaclToClasses(classesByIri, dbSchema, cnt) {
             ])).id
     
             shaclClass.dbIdList.push(classId)
+            current++
+            printProgress('Classes     ', current, total)
         }
     }
+    printStepDone('Classes     ', current, start)
 }
   
 async function pushShaclToProperties(propertiesById, dbSchema, cnt) {
@@ -132,6 +161,10 @@ async function pushShaclToProperties(propertiesById, dbSchema, cnt) {
     let existingPropertyPaths = (propertyIris ?? []).map(p => p.iri)
   
     let duplicatePaths = new Set()
+    const total = Object.keys(propertiesById).length
+    let current = 0
+    const start = Date.now()
+    printProgress('Properties  ', current, total)
 
     for (let id in propertiesById) {
         let prop = propertiesById[id]
@@ -216,6 +249,8 @@ async function pushShaclToProperties(propertiesById, dbSchema, cnt) {
                 }
             }
         }
+        current++
+        printProgress('Properties  ', current, total)
     }
 
     if (duplicatePaths.size !== 0) {
@@ -230,9 +265,14 @@ async function pushShaclToProperties(propertiesById, dbSchema, cnt) {
             throw e
         }
     }
+    printStepDone('Properties  ', current, start)
 }
   
 async function pushShaclToCpRels(propertiesById, dbSchema, cnt) {
+    const total = Object.keys(propertiesById).length
+    let current = 0
+    const start = Date.now()
+    printProgress('CP-rels     ', current, total)
     for (let id in propertiesById) {
         let prop = propertiesById[id]
   
@@ -283,7 +323,10 @@ async function pushShaclToCpRels(propertiesById, dbSchema, cnt) {
                 }
             }
         }
+        current++
+        printProgress('CP-rels     ', current, total)
     }
+    printStepDone('CP-rels     ', current, start)
 }
 
 async function pushShaclToCpcRels(propertiesById, dbSchema, cnt) {
@@ -310,9 +353,15 @@ async function pushShaclToCpcRels(propertiesById, dbSchema, cnt) {
         existingCpcRelIdByGroup[key] = group.id
     }
 
+    const total = Object.keys(propertiesById).length
+    let current = 0
+    const start = Date.now()
+    printProgress('CPC-rels    ', current, total)
 
     for (let id in propertiesById) {
         let prop = propertiesById[id]
+        current++
+        printProgress('CPC-rels    ', current, total)
         if (!prop.path || !prop.rdfValueClasses) {
             continue
         }
@@ -402,10 +451,15 @@ async function pushShaclToCpcRels(propertiesById, dbSchema, cnt) {
             }
         }
     }
+    printStepDone('CPC-rels    ', current, start)
 }
 
 async function pushShaclToPpRelsType1(propertiesById, dbSchema, cnt) {
-    let existingPpRelIdByGroup = {} 
+    let existingPpRelIdByGroup = {}
+    const total = Object.keys(propertiesById).length
+    let current = 0
+    const start = Date.now()
+    printProgress('PP-rels (1) ', current, total)
 
     for (let propertyId in propertiesById) {
         let property = propertiesById[propertyId]
@@ -445,11 +499,18 @@ async function pushShaclToPpRelsType1(propertiesById, dbSchema, cnt) {
                 }
             }
         }
+        current++
+        printProgress('PP-rels (1) ', current, total)
     }
+    printStepDone('PP-rels (1) ', current, start)
 }
 
 async function pushShaclToPpRelsType2(propertiesById, dbSchema, cnt) {
-    let existingPpRelIdByGroup = {} 
+    let existingPpRelIdByGroup = {}
+    const total = Object.keys(propertiesById).length
+    let current = 0
+    const start = Date.now()
+    printProgress('PP-rels (2) ', current, total)
 
     for (let propertyId in propertiesById) {
         let property = propertiesById[propertyId]
@@ -489,7 +550,10 @@ async function pushShaclToPpRelsType2(propertiesById, dbSchema, cnt) {
                 }
             }
         }
+        current++
+        printProgress('PP-rels (2) ', current, total)
     }
+    printStepDone('PP-rels (2) ', current, start)
 }
   
 async function setRdfType(dbSchema) {
