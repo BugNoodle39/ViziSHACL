@@ -1,10 +1,6 @@
 import fs from 'fs'
 import _ from 'lodash'
 
-function escapeRegExp(string) {
-  return string.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'); // $& means the whole matched string
-}
-
 function getIriName(iri) {
   if (iri.indexOf('#') !== -1) {
     return iri.split('#').at(-1)
