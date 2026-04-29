@@ -1,7 +1,12 @@
 import _ from 'lodash'
 import pgp from 'pg-promise'
 import pgUrlParse from 'pg-connection-string'
+import { readFile } from 'fs/promises'
+import { fileURLToPath } from 'url'
+import path from 'path'
 import { getIriName } from './utils.js'
+
+const __dirname = path.dirname(fileURLToPath(import.meta.url))
 
 const pgpOptions = {}
 const pgpInstance = pgp(pgpOptions)
@@ -9,6 +14,9 @@ const pgUrlParseInstance = pgUrlParse.parse
 
 const DB_URL = process.env.DB_URL
 const DB_SCHEMA = process.env.DB_SCHEMA
+const SCHEMA_DISPLAY_NAME = process.env.SCHEMA_DISPLAY_NAME
+const ENDPOINT_URL = process.env.ENDPOINT_URL
+const ENDPOINT_TYPE = process.env.ENDPOINT_TYPE
 const DB_CONFIG = pgUrlParseInstance(DB_URL)
 const db = pgpInstance(DB_CONFIG)
 
@@ -18,7 +26,8 @@ async function pushShaclToViziquerDb(classesByIri, propertiesById) {
     //let dbSchema = 'mini_university'
     let dbSchema = DB_SCHEMA
     let cnt = 1
-  
+
+    await ensureSchemaExists(dbSchema)
     await clearDB(dbSchema)
 
     //TODO: transakcijas
@@ -31,8 +40,27 @@ async function pushShaclToViziquerDb(classesByIri, propertiesById) {
     await pushShaclToPpRelsType2(propertiesById, dbSchema, cnt)
 
     await setRdfType(dbSchema)
+    await pushShaclToParameters(dbSchema)
+    await db.none('CALL public.register_schemata()')
 }
   
+async function ensureSchemaExists(dbSchema) {
+    const { exists } = await db.one(
+        `SELECT EXISTS (
+            SELECT 1 FROM information_schema.schemata WHERE schema_name = $1
+        ) AS exists`,
+        [dbSchema]
+    )
+    if (exists) return
+
+    console.log(`Schema '${dbSchema}' does not exist — creating from template...`)
+    const templatePath = path.join(__dirname, 'schema-template.sql')
+    const templateSql = await readFile(templatePath, 'utf8')
+    const schemaSql = templateSql.replace(/\bempty\b/g, dbSchema)
+    await db.multi(schemaSql)
+    console.log(`Schema '${dbSchema}' created successfully.`)
+}
+
 async function clearDB(dbSchema) {
     await db.none(`delete from ${dbSchema}.pp_rels`)
     await db.none(`delete from ${dbSchema}.cpc_rels`)
@@ -469,6 +497,24 @@ async function setRdfType(dbSchema) {
         set ns_id=1
         where iri = 'http://www.w3.org/1999/02/22-rdf-syntax-ns#type'`
     )
+}
+
+async function pushShaclToParameters(dbSchema) {
+    const now = new Date().toISOString()
+    const params = [
+        { name: 'db_schema_name',        value: dbSchema },
+        { name: 'display_name_default',  value: SCHEMA_DISPLAY_NAME || dbSchema },
+        { name: 'endpoint_url',          value: ENDPOINT_URL || null },
+        { name: 'endpoint_type',         value: ENDPOINT_TYPE || 'generic' },
+        { name: 'schema_import_datetime',value: now },
+        { name: 'schema_kind',           value: 'default' },
+    ]
+    for (const p of params) {
+        await db.none(
+            `UPDATE ${dbSchema}.parameters SET textvalue = $1 WHERE name = $2`,
+            [p.value, p.name]
+        )
+    }
 }
 
 export { pushShaclToViziquerDb }
