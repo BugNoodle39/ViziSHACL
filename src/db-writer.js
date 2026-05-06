@@ -32,6 +32,56 @@ function printStepDone(label, count, startTime) {
     process.stdout.write(`\r  ${label} [\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588] 100%  (${count}/${count})  ${secs}s\n`)
 }
 
+function getNamespaceWithDelimiter(iri) {
+    const hashIdx = iri.indexOf('#')
+    if (hashIdx !== -1) return iri.substring(0, hashIdx + 1)
+    const lastSlash = iri.lastIndexOf('/')
+    if (lastSlash !== -1) return iri.substring(0, lastSlash + 1)
+    return null
+}
+
+function derivePrefixName(nsIri) {
+    const base = nsIri.replace(/[#/]$/, '')
+    const lastSegment = base.split('/').pop() || ''
+    const noExt = lastSegment.replace(/\.[^.]+$/, '')
+    const clean = noExt.replace(/[^a-zA-Z0-9]/g, '').toLowerCase()
+    return clean || 'ns'
+}
+
+async function addMissingNamespaces(classesByIri, propertiesById, prefixes, nsMap, dbSchema) {
+    const usedPrefixNames = new Set(Object.keys(prefixes))
+    const missingNs = new Set()
+
+    for (const shaclClass of Object.values(classesByIri)) {
+        for (const targetClass of shaclClass.targetClassList) {
+            const ns = getNamespaceWithDelimiter(targetClass)
+            if (ns && !nsMap[ns]) missingNs.add(ns)
+        }
+    }
+    for (const prop of Object.values(propertiesById)) {
+        if (prop.path) {
+            const ns = getNamespaceWithDelimiter(prop.path)
+            if (ns && !nsMap[ns]) missingNs.add(ns)
+        }
+    }
+
+    if (missingNs.size === 0) return
+
+    let autoIdx = 0
+    for (const ns of missingNs) {
+        let prefix = derivePrefixName(ns)
+        while (usedPrefixNames.has(prefix)) {
+            prefix = `ns${autoIdx++}`
+        }
+        usedPrefixNames.add(prefix)
+        const { id } = await db.one(
+            `INSERT INTO ${dbSchema}.ns (name, value) VALUES ($1, $2) RETURNING id`,
+            [prefix, ns]
+        )
+        nsMap[ns] = id
+    }
+}
+
 function getNsId(iri, nsMap) {
     let bestId = null
     let bestLength = 0
@@ -82,6 +132,7 @@ async function pushShaclToViziquerDb(classesByIri, propertiesById, prefixes = {}
     process.stdout.write(' done\n')
 
     const nsMap = await pushNsTable(prefixes, dbSchema)
+    await addMissingNamespaces(classesByIri, propertiesById, prefixes, nsMap, dbSchema)
     await pushShaclToClasses(classesByIri, dbSchema, cnt, nsMap)
     await pushShaclToProperties(propertiesById, dbSchema, cnt, nsMap)
     await pushShaclToCpRels(propertiesById, dbSchema, cnt)
@@ -176,9 +227,7 @@ async function pushShaclToClasses(classesByIri, dbSchema, cnt, nsMap) {
                 targetClass,
                 cnt,
                 getIriName(targetClass),
-                getIriName(targetClass),
-                //getIriName(shaclClass.name),
-                //getIriName(shaclClass.name)
+                shaclClass.shaclName || getIriName(targetClass),
                 'http://www.w3.org/1999/02/22-rdf-syntax-ns#type',
                 getNsId(targetClass, nsMap)
             ])).id
@@ -260,7 +309,7 @@ async function pushShaclToProperties(propertiesById, dbSchema, cnt, nsMap) {
                     [
                         prop.path,
                         cnt,
-                        getIriName(iri),
+                        prop.name || getIriName(iri),
                         getIriName(iri),
                         1,
                         shaclDomainClassDbId || null,

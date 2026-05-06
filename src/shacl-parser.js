@@ -83,6 +83,9 @@ function parseShapesToObjects(shapes, print = true) {
                 shaclClass.targetClassList.push(classFieldValue)
             } else {
                 shaclClass[classFieldName] = classFieldValue
+                if (classFieldName === 'name') {
+                    shaclClass.shaclName = classFieldValue
+                }
             }
         }
 
