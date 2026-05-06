@@ -14,10 +14,10 @@ async function main() {
   
   printNamespaces(shaclPath)
 
-  let { classesByIri, propertiesById } = await parseFileToObjects(shaclPath, false)
+  let { classesByIri, propertiesById, prefixes } = await parseFileToObjects(shaclPath, false)
   
   try {
-    await pushShaclToViziquerDb(classesByIri, propertiesById)
+    await pushShaclToViziquerDb(classesByIri, propertiesById, prefixes)
   } catch (e) {
     console.log(e)
   }

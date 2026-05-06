@@ -32,8 +32,40 @@ function printStepDone(label, count, startTime) {
     process.stdout.write(`\r  ${label} [\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588] 100%  (${count}/${count})  ${secs}s\n`)
 }
 
+function getNsId(iri, nsMap) {
+    let bestId = null
+    let bestLength = 0
+    for (const [ns, id] of Object.entries(nsMap)) {
+        if (iri.startsWith(ns) && ns.length > bestLength) {
+            bestId = id
+            bestLength = ns.length
+        }
+    }
+    return bestId
+}
+
+async function pushNsTable(prefixes, dbSchema) {
+    const nsMap = {}
+    const entries = Object.entries(prefixes)
+    const total = entries.length
+    const start = Date.now()
+    let current = 0
+    printProgress('Namespaces  ', current, total)
+    for (const [prefix, namespaceIri] of entries) {
+        const { id } = await db.one(
+            `INSERT INTO ${dbSchema}.ns (name, value) VALUES ($1, $2) RETURNING id`,
+            [prefix, namespaceIri]
+        )
+        nsMap[namespaceIri] = id
+        current++
+        printProgress('Namespaces  ', current, total)
+    }
+    printStepDone('Namespaces  ', current, start)
+    return nsMap
+}
+
 //Ievieto saveidotos shacl objektus ViziQuer DB
-async function pushShaclToViziquerDb(classesByIri, propertiesById) {
+async function pushShaclToViziquerDb(classesByIri, propertiesById, prefixes = {}) {
     //let dbSchema = 'mini_university'
     let dbSchema = DB_SCHEMA
     let cnt = 1
@@ -49,15 +81,16 @@ async function pushShaclToViziquerDb(classesByIri, propertiesById) {
     await clearDB(dbSchema)
     process.stdout.write(' done\n')
 
-    await pushShaclToClasses(classesByIri, dbSchema, cnt)
-    await pushShaclToProperties(propertiesById, dbSchema, cnt)
+    const nsMap = await pushNsTable(prefixes, dbSchema)
+    await pushShaclToClasses(classesByIri, dbSchema, cnt, nsMap)
+    await pushShaclToProperties(propertiesById, dbSchema, cnt, nsMap)
     await pushShaclToCpRels(propertiesById, dbSchema, cnt)
     await pushShaclToCpcRels(propertiesById, dbSchema, cnt)
     await pushShaclToPpRelsType1(propertiesById, dbSchema, cnt)
     await pushShaclToPpRelsType2(propertiesById, dbSchema, cnt)
 
     process.stdout.write('  Registering schema in ViziQuer...')
-    await setRdfType(dbSchema)
+    await setRdfType(dbSchema, nsMap)
     await pushShaclToParameters(dbSchema)
     await db.none('CALL public.register_schemata()')
     process.stdout.write(' done\n')
@@ -89,9 +122,10 @@ async function clearDB(dbSchema) {
     await db.none(`delete from ${dbSchema}.cp_rels`)
     await db.none(`delete from ${dbSchema}.properties`)
     await db.none(`delete from ${dbSchema}.classes`)
+    await db.none(`delete from ${dbSchema}.ns`)
 }
 
-async function pushShaclToClasses(classesByIri, dbSchema, cnt) {
+async function pushShaclToClasses(classesByIri, dbSchema, cnt, nsMap) {
     const total = Object.values(classesByIri).reduce((s, c) => s + c.targetClassList.length, 0)
     let current = 0
     const start = Date.now()
@@ -126,7 +160,7 @@ async function pushShaclToClasses(classesByIri, dbSchema, cnt) {
                 $1,
                 $2,
                 true,
-                10,
+                $6,
                 $3,
                 $4,
                 $5,
@@ -145,7 +179,8 @@ async function pushShaclToClasses(classesByIri, dbSchema, cnt) {
                 getIriName(targetClass),
                 //getIriName(shaclClass.name),
                 //getIriName(shaclClass.name)
-                'http://www.w3.org/1999/02/22-rdf-syntax-ns#type'
+                'http://www.w3.org/1999/02/22-rdf-syntax-ns#type',
+                getNsId(targetClass, nsMap)
             ])).id
     
             shaclClass.dbIdList.push(classId)
@@ -156,7 +191,7 @@ async function pushShaclToClasses(classesByIri, dbSchema, cnt) {
     printStepDone('Classes     ', current, start)
 }
   
-async function pushShaclToProperties(propertiesById, dbSchema, cnt) {
+async function pushShaclToProperties(propertiesById, dbSchema, cnt, nsMap) {
     let propertyIris = await db.manyOrNone(`SELECT id, iri FROM ${dbSchema}.properties`)
     let existingPropertyPaths = (propertyIris ?? []).map(p => p.iri)
   
@@ -205,7 +240,7 @@ async function pushShaclToProperties(propertiesById, dbSchema, cnt) {
                         VALUES (
                         $1,
                         $2,
-                        10,
+                        $7,
                         $3,
                         $4,
                         false,
@@ -228,7 +263,8 @@ async function pushShaclToProperties(propertiesById, dbSchema, cnt) {
                         getIriName(iri),
                         getIriName(iri),
                         1,
-                        shaclDomainClassDbId || null
+                        shaclDomainClassDbId || null,
+                        getNsId(prop.path, nsMap)
                     ])).id
                 } catch (error) {
                     console.log(error)
@@ -556,10 +592,12 @@ async function pushShaclToPpRelsType2(propertiesById, dbSchema, cnt) {
     printStepDone('PP-rels (2) ', current, start)
 }
   
-async function setRdfType(dbSchema) {
-    await db.none(`update ${dbSchema}.properties
-        set ns_id=1
-        where iri = 'http://www.w3.org/1999/02/22-rdf-syntax-ns#type'`
+async function setRdfType(dbSchema, nsMap) {
+    const rdfNs = 'http://www.w3.org/1999/02/22-rdf-syntax-ns#'
+    const nsId = nsMap[rdfNs] ?? null
+    await db.none(
+        `UPDATE ${dbSchema}.properties SET ns_id = $1 WHERE iri = 'http://www.w3.org/1999/02/22-rdf-syntax-ns#type'`,
+        [nsId]
     )
 }
 

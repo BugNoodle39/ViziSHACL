@@ -1,13 +1,34 @@
 import rdf from '@zazuko/env-node'
+import { readFile } from 'fs/promises'
 import { getIriName, isPropertyIdFn } from "./utils.js";
 import _ from 'lodash'
 
 
 
+function extractPrefixes(fileText) {
+    const prefixes = {}
+    const turtleRegex = /@prefix\s+(\w*):\s+<([^>]+)>/gi
+    for (const match of fileText.matchAll(turtleRegex)) {
+        prefixes[match[1]] = match[2]
+    }
+    const sparqlRegex = /^PREFIX\s+(\w*):\s+<([^>]+)>/gm
+    for (const match of fileText.matchAll(sparqlRegex)) {
+        if (!(match[1] in prefixes)) {
+            prefixes[match[1]] = match[2]
+        }
+    }
+    return prefixes
+}
+
 async function parseFileToObjects(shaclFilePath, print = true) {
-    const shapes = await rdf.dataset().import(rdf.fromFile(shaclFilePath))
-    
-    return parseShapesToObjects(shapes, print)
+    const [shapes, fileText] = await Promise.all([
+        rdf.dataset().import(rdf.fromFile(shaclFilePath)),
+        readFile(shaclFilePath, 'utf8')
+    ])
+    const prefixes = extractPrefixes(fileText)
+
+    const result = parseShapesToObjects(shapes, print)
+    return { ...result, prefixes }
 }
 
 function parseShapesToObjects(shapes, print = true) {
