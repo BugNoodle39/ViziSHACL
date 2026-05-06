@@ -1,9 +1,8 @@
-import _ from 'lodash'
 import pgp from 'pg-promise'
 import pgUrlParse from 'pg-connection-string'
-import { readFile } from 'fs/promises'
-import { fileURLToPath } from 'url'
-import path from 'path'
+import { readFile } from 'node:fs/promises'
+import { fileURLToPath } from 'node:url'
+import path from 'node:path'
 import { getIriName } from './utils.js'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
@@ -44,7 +43,7 @@ function derivePrefixName(nsIri) {
     const base = nsIri.replace(/[#/]$/, '')
     const lastSegment = base.split('/').pop() || ''
     const noExt = lastSegment.replace(/\.[^.]+$/, '')
-    const clean = noExt.replace(/[^a-zA-Z0-9]/g, '').toLowerCase()
+    const clean = noExt.replaceAll(/[^a-zA-Z0-9]/g, '').toLowerCase()
     return clean || 'ns'
 }
 
@@ -162,7 +161,7 @@ async function ensureSchemaExists(dbSchema) {
     console.log(`Schema '${dbSchema}' does not exist — creating from template...`)
     const templatePath = path.join(__dirname, 'schema-template.sql')
     const templateSql = await readFile(templatePath, 'utf8')
-    const schemaSql = templateSql.replace(/\bempty\b/g, dbSchema)
+    const schemaSql = templateSql.replaceAll(/\bempty\b/g, dbSchema)
     await db.multi(schemaSql)
     console.log(`Schema '${dbSchema}' created successfully.`)
 }
@@ -259,7 +258,7 @@ async function pushShaclToProperties(propertiesById, dbSchema, cnt, nsMap) {
         }
 
         for (let shaclDomainClassDbId of shaclDomainClassDbIdList) {
-            if (prop.path && existingPropertyPaths.indexOf(prop.path) === -1) {
+            if (prop.path && !existingPropertyPaths.includes(prop.path)) {
                 let iri = getIriName(prop.path)
                 let propertyId
     
@@ -324,7 +323,7 @@ async function pushShaclToProperties(propertiesById, dbSchema, cnt, nsMap) {
         
                 existingPropertyPaths.push(prop.path)
                 propertyIris.push({ id: propertyId, iri: prop.path })
-            } else if (existingPropertyPaths.indexOf(prop.path) !== -1) {
+            } else if (existingPropertyPaths.includes(prop.path)) {
                 try {
                     prop.dbId = propertyIris.find(p => p.iri === prop.path).id
 
@@ -366,9 +365,9 @@ async function pushShaclToCpRels(propertiesById, dbSchema, cnt) {
                 //cnt = Number(prop.entities ?? cnt.toString())
             
                 if (prop.path) {
-                    let isOutgoing = true
+                    const isOutgoing = true
         
-                    let cpRelId = (await db.one(`INSERT INTO ${dbSchema}.cp_rels (
+                    await db.none(`INSERT INTO ${dbSchema}.cp_rels (
                         class_id,
                         property_id,
                         type_id,
@@ -394,8 +393,7 @@ async function pushShaclToCpRels(propertiesById, dbSchema, cnt) {
                         1,
                         2,
                         true,
-                        $7)
-                    RETURNING id`,
+                        $7)`,
                     [
                         shaclClassDbId,
                         prop.dbId,
@@ -404,7 +402,7 @@ async function pushShaclToCpRels(propertiesById, dbSchema, cnt) {
                         prop.maxCount === '*' ? -1 : prop.maxCount,
                         prop.minCount === '*' ? -1 : prop.minCount,
                         cnt
-                    ])).id
+                    ])
                 }
             }
         }
@@ -451,7 +449,7 @@ async function pushShaclToCpcRels(propertiesById, dbSchema, cnt) {
             continue
         }
   
-        let isOutgoing = false
+        const isOutgoing = false
 
 
         for (let shaclClassDbId of prop.shaclClasses.flatMap(c => c.dbIdList)) {

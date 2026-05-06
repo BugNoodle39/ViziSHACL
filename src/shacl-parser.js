@@ -1,5 +1,5 @@
 import rdf from '@zazuko/env-node'
-import { readFile } from 'fs/promises'
+import { readFile } from 'node:fs/promises'
 import { getIriName, isPropertyIdFn } from "./utils.js";
 import _ from 'lodash'
 
@@ -50,7 +50,7 @@ function parseShapesToObjects(shapes, print = true) {
             object = quad.object.value
             predicate = quad.predicate.value
             subject = quad.subject.value
-        } catch (error) {
+        } catch {
             throw new Error(`Neizdevas izgut datus no quad.\n ${object} => ${predicate} => ${subject}`)
         }
 
@@ -143,7 +143,7 @@ function processOrField(shaclProperty, shaclPropertyCollection, shaclClassCollec
         let orNode = shaclPropertyCollection.getPropertyRaw(orChainItem.first)
 
         if (!commonFields) {    //pirmā cikla iterācija
-            commonFields = JSON.parse(JSON.stringify(orNode))
+            commonFields = structuredClone(orNode)
             commonFields.entities = '0'
         }
         
@@ -181,13 +181,13 @@ function processOrNode(orNode, commonFields, shaclClassCollection) {
         } else if (fieldKey.toLowerCase() === 'class') {
             //akumulējam, nevis ņemam unikālo
             const shaclClass = shaclClassCollection.getClassByTargetClass(fieldValue)
-            if (!shaclClass) {
-                console.log(`Nav atrasta klase pēc iri "${fieldValue}". Apstrādājot OR izteiksmi, lauks "${fieldKey}=${fieldValue}"`)
-            } else {
+            if (shaclClass) {
                 commonFieldsNew.rdfValueClasses = commonFields.rdfValueClasses || []
                 commonFieldsNew.rdfValueClasses.push(shaclClass)
+            } else {
+                console.log(`Nav atrasta klase pēc iri "${fieldValue}". Apstrādājot OR izteiksmi, lauks "${fieldKey}=${fieldValue}"`)
             }
-        } else if (Object.keys(commonFields).indexOf(fieldKey) !== -1 && commonFields[fieldKey] === fieldValue) {
+        } else if (Object.keys(commonFields).includes(fieldKey) && commonFields[fieldKey] === fieldValue) {
             //atstājam tikai tos propertijus, kas pilnībā atkārtojas
             commonFieldsNew[fieldKey] = commonFields[fieldKey]
         } else {
@@ -216,7 +216,7 @@ class ShaclClassCollection {
     }
 
     getClassByTargetClass(targetClass) {
-        return Object.values(this.classesByIri).find(c => c.targetClassList.indexOf(targetClass) !== -1)
+        return Object.values(this.classesByIri).find(c => c.targetClassList.includes(targetClass))
     }
 
     removeClass(classIri) {
@@ -302,7 +302,7 @@ class ShaclProperty {
 
     // atstāj tikai SHACL failā norādītos laukus, nevis šeit custom veidotos
     getRaw() {
-        let prop = JSON.parse(JSON.stringify(this))
+        let prop = structuredClone(this)
         
         delete prop.id
         delete prop.shaclDomainClass

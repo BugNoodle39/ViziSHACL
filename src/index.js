@@ -8,19 +8,14 @@ import { printNamespaces } from './utils.js'
 import { parseFileToObjects } from './shacl-parser.js'
 import { pushShaclToViziquerDb } from './db-writer.js'
 
+const shaclPath = process.env.INPUT_FILE
 
-async function main() {
-  let shaclPath = process.env.INPUT_FILE
-  
-  printNamespaces(shaclPath)
+printNamespaces(shaclPath)
 
-  let { classesByIri, propertiesById, prefixes } = await parseFileToObjects(shaclPath, false)
-  
-  try {
-    await pushShaclToViziquerDb(classesByIri, propertiesById, prefixes)
-  } catch (e) {
-    console.log(e)
-  }
+const { classesByIri, propertiesById, prefixes } = await parseFileToObjects(shaclPath, false)
+
+try {
+  await pushShaclToViziquerDb(classesByIri, propertiesById, prefixes)
+} catch (e) {
+  console.log(e)
 }
-
-main()
